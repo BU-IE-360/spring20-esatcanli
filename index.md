@@ -2,4 +2,6 @@
 
 ## Homework 0 
 
-[HERE](files/Homework-0.html) Here's my homework 
+[HERE](files/HW0.html) 
+
+[HERE](files/HW1.html)
