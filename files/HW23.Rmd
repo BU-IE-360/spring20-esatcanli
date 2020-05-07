@@ -740,7 +740,7 @@ Extra: The time series is desesonalized and detrended with multiple seasonality 
 R Script is mostly the same but some last minute changes are done directly from the RMD file, therefore it may be missing some code. All the code is already present in this file and can be followed with ease. 
 
 
-
+Here's my R Script:  https://github.com/BU-IE-360/spring20-esatcanli/blob/master/files/HW23%20R%20Script.R
 
 
 
