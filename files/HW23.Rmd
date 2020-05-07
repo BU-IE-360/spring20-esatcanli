@@ -1,0 +1,748 @@
+---
+title: "HW23"
+author: "Esat Canli"
+date: "07/05/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE,fig.width=10, fig.height=6)
+```
+
+
+
+Introduction: Electric Usage Rates in MwH in Turkey will be examined in this analysis. Data will be read, processed, and also needs tidying. xts and ts objects will be used for manipulation along with data.table package, 
+
+Base R functions in plottin will be generally used with some ggplot uses time to time. XTS objects are used to convert the time-based data into different formats while maintaining it's specifications. 
+
+xts objects also proves an ease of use in  performing aggregation and date operations. 
+
+
+
+Initial Ideas: Electricity consumption should have weekly (each 7 day) and also seasonal reversions to the previous values. Also, 24 hour reversion may be observed. 
+
+Purpose: Electric Consumption Data is a highly seasonal data with daily, weekly, monthly properties and also exhibits strange drops and increases resulting from special days like holidays. The purpose of this analysis is to forecast the next 24 hours of electricity consumption in Turkey based on historic data. 
+
+Challenges: Novel coronavirus has impacted the electric usage in homes severly in the last 2 months, therefore our predictions are likely to be higher than what we would have made without the virus, Also, the data inherently posesses some strange properties such as different number of days in a month or a fractional number of weeks in a month, this problem will be adressed later.
+
+
+
+
+
+
+
+
+Loading Neccessary Packages 
+```{r cars,message=FALSE,warning=FALSE}
+require(readxl)
+require(data.table)
+require(zoo)
+require(xts)
+require(forecast)
+require(stats)
+require(lubridate)
+require(dplyr)
+require(ggplot2)
+require(scales)
+```
+
+
+
+Reading Data from CSV & Adding a Date&Hour Column for ease of use later 
+```{r}
+Electric_Usage_Data<-read.csv('GercekZamanliTuketim-01012016-26042020.csv',header = T)
+head(Electric_Usage_Data)
+Electric_Usage_Data$Date<-paste(Electric_Usage_Data$Tarih,Electric_Usage_Data$Saat)
+```
+
+Setting Names and Checking the String
+```{r}
+names<-c("Date","Hour","Usage(MwH)","Date&Hour")
+setnames(x = Electric_Usage_Data,old = names(Electric_Usage_Data),new = names)
+str(Electric_Usage_Data)
+```
+
+
+Converting String to appropriate levels
+```{r}
+Electric_Usage_Data$`Usage(MwH)`<-as.numeric(Electric_Usage_Data$`Usage(MwH)`)
+str(Electric_Usage_Data)
+```
+
+
+
+
+
+Converting to XTS, This is done to perform operations easier when dealing with time related manipulations. Also the Date&Hour column was added so that we can easily convert the data into an xts
+```{r}
+Electric_Usage_XTS_Hourly<-xts(Electric_Usage_Data$`Usage(MwH)`,
+                               order.by=as.Date(Electric_Usage_Data$`Date&Hour`,"%d.%m.%Y %H:%M:%S"))
+```
+
+
+Checking the Data, if done correctly we should have the correct number of months and days.   
+```{r}
+nmonths(Electric_Usage_XTS_Hourly)
+ndays(Electric_Usage_XTS_Hourly)
+```
+
+  
+  
+
+Hourly Conversion
+ 
+Since the original period of the data is hourly we need a frequency that will fit the it, since we are claiming that there is a period of 24 for each day, we should convert it using the frequency set to 24, basically telling R we have an approximate periodicity of 24 hours in the feeded data 
+```{r}
+Electric_Usage_TS_Hourly<-ts(Electric_Usage_XTS_Hourly,start=c(2016,1),freq=24)
+```
+ 
+
+
+Checking the data 
+```{r,fig.show='hold',out.width="50%"}
+ts.plot(Electric_Usage_TS_Hourly,main="Hourly Electric Usage in MwH", ylab="Mwh", xlab="")
+acf(Electric_Usage_TS_Hourly,main="Auto Correlation for the Hourly Electric Usage")
+```
+Figure 1&2 : Series & Auto-Correlation Plots for 24 hours frequency. 
+Comments: From the first look it, counting bars from the ACF, it can be said that there is a correlation between the 1st and 25th value, as we can understand the same hour of the day will have a correlation throughout the train period.
+
+
+  
+
+Hourly Decompostion, we will use both methods until one is proven to be better than the other
+
+```{r}
+Electric_Usage_TS_Hourly_Multiplicative<-decompose(Electric_Usage_TS_Hourly,type="multiplicative")
+Electric_Usage_TS_Hourly_Additive<-decompose(Electric_Usage_TS_Hourly,type="additive")
+
+```
+
+
+
+```{r,fig.show='hold',out.width="50%"}
+plot(Electric_Usage_TS_Hourly_Multiplicative)
+plot(Electric_Usage_TS_Hourly_Additive)
+```
+Figure 3&4: Hourly Decomposition for Multiplicative and Additive Data
+Comments: From the first look - as the data set is too large - it may not be useful to make a deduction, let us plot the randomness part of these figures and find out which one serves us better. 
+It should be also stated that we do not have an ever increasing data in our hands, also the sudden decrease in the last period shows that we have a gap in the data since we dont have the full year. 
+
+
+
+
+Plotting Randomness of the two, deciding which is a better approximation.
+```{r,fig.show='hold',out.width="50%"}
+plot(Electric_Usage_TS_Hourly_Multiplicative$random,
+     frame=FALSE,
+     col="black",
+     lwd=0.1,
+     main="Hourly Multiplicative Method Random Noise",
+     ylab= "Random Noise",
+     xlab= "Time")
+plot(Electric_Usage_TS_Hourly_Additive$random,
+     frame=FALSE,
+     col="black",
+     lwd=0.1,
+     main="Hourly Additive Method Random Noise",
+     ylab= "Random Noise",
+     xlab= "Time")
+```
+Figure 5&6: Hourly Multiplicative and Additive Data Randomness
+Comments: The second graph looks more appropriate for the data since it's variance does not fluctuate over time, it moves on a random walk with mean remaining constant. 
+
+
+
+
+
+Daily Conversion is done on the mean Since the sum values could have been used, however it would prove hard to have a meaningful result - not comparison - since we can only see the aggreagate sum of hourly values but not the change of the mean of values in consecutive days, I am more interested in how the values change in consecutive days.  
+
+
+using XTS objects: Aggregating all 24 hours of the data and taking a simple mean on the observations, using FUN=mean while seperating the data on the "days" with endpoints later to be aggregated in the mean, periodicity also seems to be correct. 
+
+```{r}
+eu_daily<-endpoints(Electric_Usage_XTS_Hourly,on="days")
+Electric_Usage_XTS_Daily<-period.apply(Electric_Usage_XTS_Hourly,INDEX=eu_daily,FUN=mean)
+periodicity(Electric_Usage_XTS_Daily)
+```
+
+
+Converting back to time series,  since now we have a daily data, our new observations are done daily, therefore frequency should be decided on how many days are there in a year, frequency is taken as 7 when converting to a time series object. Because we are naturally claiming that the value of the consumption for today will be similar to the consumption done next week in the same day. All the other decompositions will be done the same way. 
+```{r}
+Electric_Usage_TS_Daily<-ts(Electric_Usage_XTS_Daily,start=c(2016,1),frequency = 7)
+length(Electric_Usage_TS_Daily)
+```
+Length seems reasonable since we would expect approximately 1577 days in approcimately 4 years of data. 
+
+
+
+Plotting the data. 
+```{r,fig.show='hold',out.width="50%"}
+ts.plot(Electric_Usage_TS_Daily, main="Daily Electric Usage in MwH")
+acf(Electric_Usage_TS_Daily,main="Auto Correlation for the Daily Electric Usage")
+```
+Figure 7&8:  Series & Auto-Correlation Plots for Daily Frequency 
+Comments: We can clearly see a 7 bar correlation which corresponds to lag 1, therefore we have proven that we also have weekly (7 days) reversion to previous values. 
+
+
+
+
+Decomposing the data on days setting with two methods 
+```{r}
+Electric_Usage_TS_Daily_Multiplicative<-decompose(Electric_Usage_TS_Daily,type="multiplicative")
+Electric_Usage_TS_Daily_Additive<-decompose(Electric_Usage_TS_Daily,type="additive")
+```
+
+
+Checking Seasonality and Also Trends
+```{r,fig.show='hold',out.width="50%"}
+plot(Electric_Usage_TS_Daily_Multiplicative)
+plot(Electric_Usage_TS_Daily_Additive)
+```
+Figure 9&10 : Daily Decomposition for Multiplicative and Additive Data
+Comments:  Daily Usage also shows a non increasing ( no need to take the log) trend with consecutive seasonality and also randomness of the two series are close
+
+
+  
+
+Looking at the daily randomness of decomposition
+```{r,fig.show='hold',out.width="50%"}
+plot(Electric_Usage_TS_Daily_Multiplicative$random,
+     frame=FALSE,
+     col="black",
+     lwd=0.1,
+     main="Multiplicative Method Random Noise",
+     ylab= "Random Noise",
+     xlab= "Time")
+# Let's get a closer look into randomness
+plot(Electric_Usage_TS_Daily_Additive$random,
+     frame=FALSE,
+     col="black",
+     lwd=0.1,
+     main="Additive Method Random Noise",
+     ylab= "Random Noise",
+     xlab= "Time")
+```
+Figure 11&12: Daily Multiplicative and Additive Data Randomness
+Comments: Additive Model again shows a better randomness for the daily frequency. 
+
+
+
+
+
+Weekly Conversion
+```{r}
+eu_weekly<-endpoints(Electric_Usage_XTS_Hourly,on="weeks")
+Electric_Usage_XTS_Weekly<-period.apply(Electric_Usage_XTS_Hourly,INDEX=eu_weekly,FUN=mean)
+periodicity(Electric_Usage_XTS_Weekly)
+```
+
+
+
+Converting to a time series object, this time since we are claiming - though not very accurate - we have a reversion to previous values every approximate 4 weeks (This proves a challenge since we are not normalizing the days of the months and all months don't have the same length of weeks, this problem is better realized by the use of xts since it directly counts the number of weeks instead of iterating values based on days)
+```{r}
+Electric_Usage_TS_Weekly<-ts(Electric_Usage_XTS_Weekly,start=c(2016,1),frequency = 4)
+length(Electric_Usage_TS_Weekly)
+```
+
+
+
+
+```{r,fig.show='hold',out.width="50%"}
+ts.plot(Electric_Usage_TS_Weekly,main="Weekly Electric Usage in MwH")
+acf(Electric_Usage_TS_Weekly,main="Auto Correlation for the Weekly Electric Usage")
+```
+Figure 13&14: Series & Auto-Correlation Plots for Weekly Frequency 
+Comments: It is not easy to read a reversion to previous values from the acf or the plot because of previously mentioned issues. To read it right, first the data should be brought into 28-months or a fractional value for the frequency should be used. However, this problem will not be further analyzed. 
+
+
+Decomposing the series on weeks 
+```{r}
+Electric_Usage_TS_Weekly_Multiplicative<-decompose(Electric_Usage_TS_Weekly,type="multiplicative")
+Electric_Usage_TS_Weekly_Additive<-decompose(Electric_Usage_TS_Weekly,type="additive")
+```
+
+
+
+Plotting:
+
+```{r,fig.show='hold',out.width="50%"}
+plot(Electric_Usage_TS_Weekly_Multiplicative)
+plot(Electric_Usage_TS_Weekly_Additive)
+```
+Figure 15&16: Daily Decomposition for Multiplicative and Additive Data
+Comments: Trend and Randomness are again read succesfully regardless of the problem mentioned before. However, the trend is read in the wrong date. 
+
+
+
+Checking Randomness
+```{r,fig.show='hold',out.width="50%"}
+plot(Electric_Usage_TS_Weekly_Multiplicative$random,
+     frame=FALSE,
+     col="black",
+     lwd=0.1,
+     main="Multiplicative Method Random Noise",
+     ylab= "Random Noise",
+     xlab= "Time")
+plot(Electric_Usage_TS_Weekly_Additive$random,
+     frame=FALSE,
+     col="black",
+     lwd=0.1,
+     main="Additive Method Random Noise",
+     ylab= "Random Noise",
+     xlab= "Time")
+```
+Fİgure 17&18: Weekly Multiplicative and Additive Data Randomness
+Comments : Additive method again shows a better fit. 
+
+
+
+
+
+
+Converting Monthly - The last conversion is the last conversion to be made since converting yearly when we only have 4 years does not yield any meaningful statistical results. 
+```{r}
+eu_monthly<-endpoints(Electric_Usage_XTS_Hourly,on="months")
+Electric_Usage_XTS_Monthly<-period.apply(Electric_Usage_XTS_Hourly,INDEX=eu_monthly,FUN=mean)
+periodicity(Electric_Usage_XTS_Monthly)
+
+```
+
+
+Converting to Time Series object, frequency equals to 12 since we have 12 observations on mean per year. 
+```{r}
+Electric_Usage_TS_Monthly<-ts(Electric_Usage_XTS_Monthly,start=c(2016,1),frequency = 12)
+length(Electric_Usage_TS_Monthly)
+```
+
+
+```{r, fig.show='hold',out.width="50%"}
+ts.plot(Electric_Usage_TS_Monthly,main="Monthly Electric Usage in MwH")
+acf(Electric_Usage_TS_Monthly,main="Auto Correlation for the Monthly Electric Usage")
+```
+Figure 19&20: Series & Auto-Correlation Plots for Monthly Frequency
+Comments:  As the data amount keeps decreasing we are having less and less meaningful deductions from the data. Also the problem mentioned before is also present in this case. However ACF values keeps getting better since we have already eliminated the correlation in the daily and weekly data by transforming the time series object on months, We are only looking at the means from certain months and not the full data. 
+
+
+
+
+Decomposing:
+
+```{r}
+Electric_Usage_TS_Monthly_Multiplicative<-decompose(Electric_Usage_TS_Monthly,type="multiplicative")
+Electric_Usage_TS_Monthly_Additive<-decompose(Electric_Usage_TS_Monthly,type="additive")
+```
+
+
+
+Plotting 
+```{r,fig.show='hold',out.width="50%"}
+plot(Electric_Usage_TS_Monthly_Multiplicative)
+plot(Electric_Usage_TS_Monthly_Additive)
+```
+Figure 21&22: Monthly Decomposition for Multiplicative and Additive Data
+Comnments: Trend is more obvious here, also it may prove useful to look at the data on the beginning of the year, we have a drop in the usage of electricity since these are the winter months and people tend to sleep earlier therfore not using as much energy as they would use in normal times. 
+
+
+
+
+Also, looking at the randomness:
+```{r,fig.show='hold',out.width="50%"}
+plot(Electric_Usage_TS_Monthly_Multiplicative$random,
+     frame=FALSE,
+     col="black",
+     lwd=0.1,
+     main="Multiplicative Method Random Noise",
+     ylab= "Random Noise",
+     xlab= "Time")
+plot(Electric_Usage_TS_Monthly_Additive$random,
+     frame=FALSE,
+     col="black",
+     lwd=0.1,
+     main="Additive Method Random Noise",
+     ylab= "Random Noise",
+     xlab= "Time")
+```
+Figure 23&24: Monthly Multiplicative and Additive Data Randomness
+Comments: These graphs don not exhibit any different properties than the ones before however it proves hard to read an obvious reduction or reversion on the mean since there is less datapoints. 
+
+
+
+
+
+
+Since we are - at the end - trying to forecast 24 steps ahead for the data we have, we must first bring it into a form in which we can successfully build a model, as far as we have seen the original data is not "stationary" and this property doesnt allow for easy forecasting, first we need to bring the data to a stationary state in which mean and variance does not change, 
+
+
+From the decomposition graphs, it is obvious that we have a seasonality both  on hours and days, therefore we have 168 hours of repeating. Working on this multiple seasonality proves a difficulty, either we need to build a model in which we can remove both daily and weekly seasonality together using a different time series model like stl and tbats or simply deseasonlize and detrend the hourly series with a frequency of 168 
+
+
+So far, we have seen a clear trend and a reversion to the previous levels in 24 hours and  also 7 days. Therfore we will use a model incorporating both these trends in the same frequency, 
+
+
+
+
+
+
+
+Converting the hourly data into a time seres with frequency=168
+```{r}
+Electric_Usage_TS_168<-ts(Electric_Usage_XTS_Hourly,start=c(2016,1),frequency =168)
+length(Electric_Usage_TS_168)
+```
+
+
+Plotting the data 
+```{r,fig.show='hold',out.width="50%"}
+ts.plot(Electric_Usage_TS_168,main="168-hourElectric Usage in MwH" )
+acf(Electric_Usage_TS_168,main="Auto Correlation for the 168-hour Electric Usage")
+```
+Figure 24&25: Series & Auto-Correlation Plots for 168-hour Frequency
+Comments: The series does not show any drag, therefore log transform will not be made. Also the trends are exhibitied. Thefore, before forecasting these trends will be removed to build a stationary time series. As "Additive" Method proved the better choice and fit,analysis will be done on this method
+
+
+
+
+```{r}
+Electric_Usage_TS_168_Additive<-decompose(Electric_Usage_TS_168,type="additive")
+plot(Electric_Usage_TS_168_Additive)
+```
+Figure 26: Additive Method 169-hour Decomposition 
+Comments: Trend is visible, also randomness has a quick reversion to the mean with no drag and a specific variance change, further analysis can be made. 
+
+
+Deseasonalizing the series, since additive method is used, Seasonality part of the model will be substracted from the data 
+```{r}
+Electric_Usage_TS_168_Additive_Deseasonalized<-Electric_Usage_TS_168-Electric_Usage_TS_168_Additive$seasonal
+
+```
+
+
+
+```{r,fig.show='hold',out.width="50%"}
+plot(Electric_Usage_TS_168_Additive_Deseasonalized)
+acf(Electric_Usage_TS_168_Additive_Deseasonalized)
+```
+Figure 27&28: Deseasonalized data and ACF
+Comments: ACF shows little seasonality ( because we have not removed monthly or yearly seasonality) and also trend becomes more obvious. 
+
+
+
+Detrending the series, since additive model is used Trend part of the model will be substracted from the data
+```{r}
+Electric_Usage_TS_168_Additive_Deseasonalized_Detrended<-Electric_Usage_TS_168_Additive_Deseasonalized-Electric_Usage_TS_168_Additive$trend
+```
+
+
+
+```{r,fig.show='hold',out.width="50%"}
+plot(Electric_Usage_TS_168_Additive_Deseasonalized_Detrended)
+acf(Electric_Usage_TS_168_Additive_Deseasonalized_Detrended,na.action = na.omit)
+```
+Figure 29&30: Deseasonalized and Detrended data and ACF
+Comments:  Correlation becomes lower but this is as far as we can remove the seasonality and trend without differencing the data on lags. This will not be performed since it complicates the arima method in forecasting beyond the scope of my report. Also, the plot on the left shows a stationary-like variable therefore we can conclude that this may prove to be a good forecasting baseline. 
+
+
+
+Fitting Models, Trying out the AR and MA models on the data we have brought into a stationary-like
+```{r}
+Model_1<-arima(Electric_Usage_TS_168_Additive_Deseasonalized_Detrended, order=c(1,0,0))
+AIC(Model_1)
+BIC(Model_1)
+
+Model_2<-arima(Electric_Usage_TS_168_Additive_Deseasonalized_Detrended, order=c(0,0,1))
+AIC(Model_2)
+BIC(Model_2)
+```
+First one is better, therefore Auto-Regressive Model will be Modelled with the data
+
+
+
+Modelling the data on AR, also calculating the fitted model for later use
+```{r}
+Final_Model<-arima(Electric_Usage_TS_168_Additive_Deseasonalized_Detrended, order=c(1,0,0))
+Fitted_Model <- Electric_Usage_TS_168 - residuals(Final_Model)
+```
+
+
+
+Fitting the Models on the actual usage rate with 168-hour use period. 
+```{r}
+ts.plot(Electric_Usage_TS_168, xlab = "Year", ylab = "Electricity Consumption",main="Consumption 2016-2020",xlim=c(2016,2020))
+points(Fitted_Model, type = "l", col = 2, lty = 2)
+```
+Figure 29: Fitted Model & 168-hour Electric Usage  
+Comments: Fitted Model appears to be a good fit to the model
+
+
+
+Forecasting the future 24 hours 
+```{r}
+Final_Model_Forecast <- predict(Final_Model, n.ahead = 24)$pred
+Final_Model_Forecast_SE<-predict(Final_Model, n.ahead = 24)$se
+print(as.data.frame(Final_Model_Forecast)) 
+```
+Table 1: Forecasted Values  
+Comments: Values seems a bit off since we have already removed the values for the trend and seasonality, we must add this back to the forecasted values and normalize it. 
+
+
+
+
+
+Taking the trend values from the last non-NA value in the decomposition 
+```{r}
+Trend_Values<-as.numeric(tail(na.omit(Electric_Usage_TS_168_Additive$trend),1)) #2614387
+Trend_Values # Just one value actually
+```
+
+Taking the Forecast Values from the Model Forecast
+
+```{r}
+Forecast_Values<-as.numeric(Final_Model_Forecast)
+```
+
+Taking the Figure Values from the first 24 values in the time series object since we are forecasting the next 24 values after the end of 168 hours. 
+
+```{r}
+Figure_Values<-head(Electric_Usage_TS_168_Additive$figure,24)
+```
+
+Adding all the values together and coming up with the actual or realized forecasts
+
+```{r}
+Realized_Forecast<-2614387+Forecast_Values+Figure_Values
+```
+
+Also, we need to find the upper and lower bound for the Realized Standard Error for these forecasts. It is done in the same way with z values taken as fractions 1.96
+
+
+```{r}
+SE_Lower_Bound<-Final_Model_Forecast-1.96*Final_Model_Forecast_SE
+
+SE_Lower_Bound<-SE_Lower_Bound+2614387+Figure_Values
+
+
+SE_Upper_Bound<-Final_Model_Forecast+1.96*Final_Model_Forecast_SE ## Upper Bound estimate on the forecast
+SE_Upper_Bound<-SE_Upper_Bound+2614387+Figure_Values ## Actual Realized Upper Bound estimate on the forecast
+```
+
+
+
+
+Calculating the mean for the last 24 actual values to be a benchmark for the forecasted values, also last 24 values could have been taken directly but is not considered neccessary. 
+```{r}
+mean(tail(Electric_Usage_Data$`Usage(MwH)`,24)) # Will be used for plotting
+```
+
+
+
+
+
+It is not possible to see 24 hour predictions on the given hourly setting - too much data - , therefore I will only plot the data with the mean of the last observations to see the trend and also bounds with the historic mean. 
+
+```{r}
+plot(Realized_Forecast, cex=1.7, pch=19,frame=FALSE,main="24 Hour Forecast Values in MwH", ylab="Energy Use", xlab="Time of Day", col="blue")
+abline(h=2331767,col="red")
+points(SE_Lower_Bound,type = "l", col = 2, lty = 2)
+```
+Figure 30: 24-Hour Forecast Values
+Comments: Forecasted values appear to be fairly accurate, it decreases around late night between 02:00-06:00, sharply increases around 08:00-09:00 which is the hour households wake up for work. It peaks around noon probably because of the increased use of cooking & cleaning materials in household and workplaces, Shows a small decrease until 19:00 and peaks at 20:00 - the time which probably many people are at home watching TV. Slowly decreases moving up to midnight and probably repeats the cycle. 
+
+
+
+
+Looking at the Bounds with Realized Forecasts. 
+
+```{r}
+Forecast_Data<-cbind(SE_Lower_Bound,Realized_Forecast,SE_Upper_Bound)
+
+Forecast_Data<-as.data.frame(Forecast_Data)
+head(Forecast_Data)
+
+```
+Table 2: Lower, Upper Bounds and Realized Forecast, Data Frame  
+Comments: Model is fairly successful in remaining close to bounds. 
+
+
+
+```{r}
+# Setting the dates for the forecasted period
+dates<-seq(as.POSIXct("2020-04-27 00:00:00"), as.POSIXct("2020-04-27 23:00:00"), by="hour")
+
+#Converting to XTS for better manipulation 
+Forecast_Data_XTS<-xts(Forecast_Data,order.by = dates)
+head(Forecast_Data_XTS)
+
+```
+Table 3: Lower, Upper Bounds and Realized Forecast, XTS Object
+Comments: Dates and Hours added
+
+
+
+
+
+```{r,include=FALSE}
+plot(Forecast_Data_XTS,main="Bound Comparison on the Forecasted Values")
+```
+
+```{r,echo=FALSE}
+
+
+addLegend(legend.loc = "topleft",
+          legend.names =c("Upper Bound","Realized Forecast","Lower Bound"),
+          col=c("green","red","black"),
+          lty=c(1,1), 
+          lwd=c(1,1),
+          cex=1,
+          bty="o")
+```
+Figure 31: Forecasted Values and Bounds
+Comments: A better view of the data with the hours added. 
+
+
+
+   
+   
+
+As an extra and a more accurate - as I believe - method: Forecasting Using stlm and mtsm  and a train - test data. 
+
+
+Since we have multiple seasonality, there are two ways of forecasting the data: First I will use stlm model with multiple seasonalities as days and weeks, later I will use the AR and MA models fitted to the data. And detrend/deseasonalize based on the given setting 
+
+
+Using Multiple Seasonality & Trends Removal with stlm and mtsm 
+
+
+Get the data into a train object 
+
+
+Uses hourly data from daily natural period therefore frequency should be 24, We will use the XTS object directly here without any changes to the original data. 
+```{r}
+Electric_Usage_Forecast_1_Train<-Electric_Usage_XTS_Hourly %>% ts(freq= 24)
+```
+
+
+Decomposing the data on the given settings
+```{r}
+Electric_Usage_Forecast_1_Train %>% 
+        tail(24*7*4) %>% 
+        decompose() %>% 
+        autoplot()
+```
+Figure 32: Decomposition on the Daily Format 
+Comments:  Denser trends can be seen from the graph with tail equaling 24*7*4
+
+
+
+
+
+Trends are daily and weekly, we will seperate these trends into two parts with a mtsm object
+
+```{r}
+Electric_Usage_Forecast_1_msts<-Electric_Usage_XTS_Hourly %>% msts( seasonal.periods = c(24, 24*7))
+Electric_Usage_Forecast_1_msts %>% head(  24 *7 *4 ) %>% mstl() %>% autoplot() 
+```
+Figure 33: Decomposition on both 24 hours and daily seasonality 
+Comments:  24-hour and 168 hour trends can be seen together easily from the graph. 
+
+
+
+
+Seperating the data into test & train parts before forecasting
+```{r}
+Electric_Usage_Forecast_1_Train_msts_train <- head(Electric_Usage_Forecast_1_msts, length(Electric_Usage_Forecast_1_msts) - 24*7*12)
+Electric_Usage_Forecast_1_Train_msts_test <- tail(Electric_Usage_Forecast_1_msts,  24*7*12)
+```
+
+
+
+
+
+
+Subsetting to a recent period (To plot the data better) 
+```{r}
+Electric_Usage_Forecast_1_Train_msts_train <- tail(Electric_Usage_Forecast_1_Train_msts_train, 24*7*4)
+autoplot(Electric_Usage_Forecast_1_Train_msts_train)
+```
+Figure 34: Subsetted Data for Forecast Fitting
+Comments: It is easier to show the forecasted values fitting on the actual model using this method.  
+
+
+Modelling on log with lambda = 0 and plotting. 24*7 for 
+```{r}
+
+Forecast_1_Model <- Electric_Usage_Forecast_1_Train_msts_train %>%
+        stlm(lambda = 0) %>% 
+        forecast(h = 24) 
+plot(Forecast_1_Model, main="Forecasting with STML model using daily and weekly seasonality")
+```
+Figure 35: Subsetted Period and Forecasted period fitted.   
+Comments: Model is fairly successful in capturing the spike in the data and also has a high probability of remaining between error bounds. 
+
+
+
+
+
+ We can also model our error & point forecasts on the exact date and time using xts objects together with data.frames
+```{r}
+Forecast_1_Model_Data_Frame<-as.data.frame(Forecast_1_Model)
+
+dates<-seq(as.POSIXct("2020-04-27 00:00:00"), as.POSIXct("2020-04-27 23:00:00"), by="hour")
+
+Forecast_Data_XTS_stlm<-xts(Forecast_1_Model_Data_Frame,order.by = dates)
+
+print(as.data.frame(Forecast_Data_XTS_stlm))
+
+
+```
+Table 4 : Point Forecasts with Upper&Lower Bounds of 80% and 90%  
+Comments:  Model is succcessful in remaining within the boundaries of high probability standard errors. 
+
+
+
+```{r, include=FALSE}
+plot(Forecast_Data_XTS_stlm,main="Bound Comparison on the Forecasted Values using STLM ")
+```
+
+
+
+```{r,echo=FALSE}
+
+
+addLegend(legend.loc = "topleft",
+          legend.names =c("Point Forecast","Lower 80% ","Higher 80%","Lower 95%", "Higher 95%"),
+          lty=c(1,1), 
+          lwd=c(1,1),
+          cex=1,
+          bty="o")
+```
+Figure 36: Point Forecasts with Lower and Upper Bounds on exact day and time of the forecast period. 
+Comments: Method proves a good fit to the observed historic data, also capturing the hourly changes within the day with accuracy.
+
+
+
+
+
+Results reached are given as the graphs are plotted, However, it is useful to give a brief conclusion of the analysis, Firstly: The data is read and converted to hourly(natural observation period - no manipulation is performed -), daily, weekly and monthly periods, the last 3 period conversions are done by converting the data with an xts object and aggregating the values by mean on the endpoints of the given period. ACF's and also MwH usage graphs are examined. Also, it is decided that an "Additive" method should be used in decomposing the data for further analysis.A 168 hour periodicity is agreed upon as was stated in the homework description. 
+
+  
+After this decision, the data is seperated into the 168-hour frequency, deaseasonalized and detrended on this frequency. - No log transformation is used -  The series is brought into a stationary-like series with a constant mean and variance. AR and MA models are fitted, AR model is decided to be better based on the AIC and BIC Values. A model is fitted and residuals are calculated. 
+  
+Finally, After the model is fitted, prediction based on the previous values are made, these values are normalized to Actual or Realized forecast values using the trend and figure parts of the decomposition. Forecast values are normalized, Standard Error Values are also normalized. Hourly forecasts are made and plotted. Comments are made with the graphs for better understanding. 
+
+
+Model fitted is found to be fairly accurate when compared to the mean of previous realizations, also Standard Error is found to be small with the forecasts.
+
+
+Extra: The time series is desesonalized and detrended with multiple seasonality settings using stlm and mtsm from the forecast package, this model is also plotted with 80% and 95% error intervals and real-time predictions are made for the 27th of April 2020. This model is also very close to the MA model However found to yield a faster estimation procedure. 
+
+
+
+R Script is mostly the same but some last minute changes are done directly from the RMD file, therefore it may be missing some code. All the code is already present in this file and can be followed with ease. 
+
+
+
+
+
+
+
+
