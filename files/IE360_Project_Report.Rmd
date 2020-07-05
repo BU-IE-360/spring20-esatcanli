@@ -346,7 +346,7 @@ However, the team has done it's best in researching  relevant materials and putt
  Yasemin Yücebilgen - 2016402021
  Mustafa Esat Canlı - 2018402003
                                                                 
-                                                          
+Accesss Script File Here: https://github.com/BU-IE-360/spring20-esatcanli/blob/master/files/IE360_ProjectClean.R                                                   
                                                                 
                                                                 
                                                                 
