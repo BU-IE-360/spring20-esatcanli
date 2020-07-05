@@ -10,3 +10,7 @@
 ## Homework 2 & 3 
 
 [HERE](files/HW23.html)
+
+## Final Project 
+
+[HERE](files/IE360_Project_Report.html)

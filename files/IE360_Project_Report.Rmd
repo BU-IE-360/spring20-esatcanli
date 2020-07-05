@@ -1,0 +1,352 @@
+---
+title: "IE360 Project"
+author: "Esat Canli"
+date: "05/07/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+                                                          INTRODUCTION
+Statistical and Time Series Analysis mainly deals with recurring and deconstructable trends and oscillations in real and non-real indicators. As we have dealt with a demand problem in electric usage in the beginning of the class and nominal indicators in the economy, we have clearly gained insights into the seasonality and trend attributes of these indicators. As opposed to forecasting and understanding consumer sentiment based indicator, some of the above problems can be forecasted without regard for any macro trends in the industry, economy or any other effecting “drag” impact.
+
+                                               TRENDYOL & PROJECT COURSE OF ACTION
+In the final Project, we have analyzed and forecasted 8 different products’ demand and sales amounts without regard for the macroeconomic trends in the economy since the demand is assumed to be only affected by the sales amount and demand in the previous years. In the private economy, sales and demand forecasts are usually done with consideration of previous sales since the effect of the macroecomomic trends are already normalized by the operations of these private companies and can be assumed to effect previous periods as much as it would effect periods ahead. 
+Trendyol is an e-commerce retaling website with an in-house data science and product forecasting departmant. Trendyol is ranked first in terms of brand awareness in Turkey’s e-commerce market with strong ties to the largest e-commerce company in the world, Alibaba. Here’s a list of products we have analyzed the sales forecast for: 
+  
+                                                          PRODUCTS  
+·	La Roche Posay – Cleansing Gel  
+·	Sleepy – Wet Wipes  
+·	Xiaomi – Bluetooth Earphone  
+·	Fakir - Sweeper  
+·	Trendyolmilla – Tight   
+·	Oral – B – Electric Toothbrush  
+·	Trendyolmilla - Bikini  
+·	Koton - Coat 
+
+                                                   MACRO TRENDS IDENTIFIED
+After identifying major trends in the sales amount by going through the data visually and inspecting it via basic plot commands along with regression plots, we were able to understand how the sales amounts were affected by historic sales amounts. As there were different trends in some product categories, we decided to inspect each category separately without the effect of the overall data. Initially, the idea that the overall sales trends would effect the sales in separate product categories were disregarded since there were different categories that required various tendencies in the consumer sentiment such as the overall temperature in the environment, the month of the year, the day of the month and locations of each customer (which are not provided). The product categories are interesting, and we believe it deserves a mention in the report, La Roche Posay Cleaning Gel and Sleepy Wet Wipes are products that sales amounts have been widely effected by the ongoing novel coronavirus pandemic. These reasons render the forecasting of these products difficult and to be honest, “partially invalid” in the coming seasons since there is a lot of obscurities surrounding the sales of these products. Another category effected by this issue is the Trendyolmilla Bikini, as the forecast season can be initially regarded as the “peak season” in the sense of sales, we have clearly seen that it is not. Therefore, this category can also be regarded as one of the non-precise forecastable categories. Because even if we consider the effect of the global pandemic – which we did – there is no clear strategy in which we can truly forecast what will happen in a day, week or month accurately.  Xiaomi Bluetooth Earphone category is also subject to rising demand for remote working products. As we have now identified major trends in the sales of products, it is necessary that we go through the programming steps one by one and explain which forecast methods were used and for what purpose.
+Initially we have separated all the product categories by ID numbers and separated the data into 8 parts. First, we have created two dates in which we will separate each product category data, one for validation and the other is for training the model as summarized below
+
+                                                      PREDICTION METHODOLOGY
+Technically, we have iterated these steps for every product category while incorporating different techniques if and when necessary.After reading the data according to the instruction, we have not run any extensive data cleaning process since the data was already fit to build models directly and for those regressors which were irrelevant to our cause, no manipulation was needed. As previously mentioned we have subsetted the data on product ID’s and converted the data into an xts object since time-related operations are easier to perform. Each xts object is again, subsetted on dates as mentioned above. We use “auto.arima()” to find the best ARIMA model. As we have used extra regressors, after this point we convert these regressors to a data table with the “cbind()” function. At this we incorporate these regressors to the arima model to come up with the “test model” which we will use to validate the model on an approximately 60-day long validation data set. We tested how good the ARIMA model was by using MAPE and MAE indicators. The process was repeat d exactly fort he linear regression model. To forecast the final submission data points, regressors were first predicted by using “auto.arima()” a data table was created from these regressors. We created our submission models by chossing the best of the test models. Then, we have enveloped the results. For all 8 products, the same process was repeated and finalized with submission data points. Here, we would like to mention an exception to this process, In the cleansing gel category, the oscillation was too high for reasons mentioned before – pandemic – and fort his reason, only data post March’20 was considered in the process for a more reliable forecast. 
+
+                                                 RETRACTING DATA & RUNNING THE API
+This part runs in the background but not shown in the report 
+```{r message=TRUE, warning=FALSE,include=FALSE}
+require(jsonlite)
+require(httr)
+require(data.table)
+
+get_token <- function(username, password, url_site){
+  
+  post_body = list(username=username,password=password)
+  post_url_string = paste0(url_site,'/token/')
+  result = POST(post_url_string, body = post_body)
+  
+  # error handling (wrong credentials)
+  if(result$status_code==400){
+    print('Check your credentials')
+    return(0)
+  }
+  else if (result$status_code==201){
+    output = content(result)
+    token = output$key
+  }
+  
+  return(token)
+}
+
+get_data <- function(start_date='2020-03-20', token, url_site){
+  
+  post_body = list(start_date=start_date,username=username,password=password)
+  post_url_string = paste0(url_site,'/dataset/')
+  
+  header = add_headers(c(Authorization=paste('Token',token,sep=' ')))
+  result = GET(post_url_string, header, body = post_body)
+  output = content(result)
+  data = data.table::rbindlist(output)
+  data[,event_date:=as.Date(event_date)]
+  data = data[order(product_content_id,event_date)]
+  return(data)
+}
+
+
+send_submission <- function(predictions, token, url_site, submit_now=F){
+  
+  format_check=check_format(predictions)
+  if(!format_check){
+    return(FALSE)
+  }
+  
+  post_string="list("
+  for(i in 1:nrow(predictions)){
+    post_string=sprintf("%s'%s'=%s",post_string,predictions$product_content_id[i],predictions$forecast[i])
+    if(i<nrow(predictions)){
+      post_string=sprintf("%s,",post_string)
+    } else {
+      post_string=sprintf("%s)",post_string)
+    }
+  }
+  
+  submission = eval(parse(text=post_string))
+  json_body = jsonlite::toJSON(submission, auto_unbox = TRUE)
+  submission=list(submission=json_body)
+  
+  print(submission)
+  # {"31515569":2.4,"32939029":2.4,"4066298":2.4,"6676673":2.4,"7061886":2.4,"85004":2.4} 
+  
+  if(!submit_now){
+    print("You did not submit.")
+    return(FALSE)      
+  }
+  
+  
+  header = add_headers(c(Authorization=paste('Token',token,sep=' ')))
+  post_url_string = paste0(url_site,'/submission/')
+  result = POST(post_url_string, header, body=submission)
+  
+  if (result$status_code==201){
+    print("Successfully submitted. Below you can see the details of your submission")
+  } else {
+    print("Could not submit. Please check the error message below, contact the assistant if needed.")
+  }
+  
+  print(content(result))
+  
+}
+
+check_format <- function(predictions){
+  
+  if(is.data.frame(predictions) | is.data.frame(predictions)){
+    if(all(c('product_content_id','forecast') %in% names(predictions))){
+      if(is.numeric(predictions$forecast)){
+        print("Format OK")
+        return(TRUE)
+      } else {
+        print("forecast information is not numeric")
+        return(FALSE)                
+      }
+    } else {
+      print("Wrong column names. Please provide 'product_content_id' and 'forecast' columns")
+      return(FALSE)
+    }
+    
+  } else {
+    print("Wrong format. Please provide data.frame or data.table object")
+    return(FALSE)
+  }
+  
+}
+
+# this part is main code
+subm_url = 'http://167.172.183.67'
+
+u_name = "Group13"
+p_word = "O73H4cqzoZUntzYW"
+submit_now = FALSE
+
+username = u_name
+password = p_word
+
+token = get_token(username=u_name, password=p_word, url=subm_url)
+data = get_data(token=token,url=subm_url)
+
+predictions=unique(data[,list(product_content_id)])
+predictions[,forecast:=2.3]
+
+send_submission(predictions, token, url=subm_url, submit_now=F)
+```
+                                                 
+                                                 PREREQUISTE DEFINITIONS & LIBRARIES
+```{r,echo=TRUE,results='hide',warning=FALSE,message=FALSE}
+require(ggplot2)
+library(caTools)
+library(xts)
+library(zoo)
+library(forecast)
+
+summary(data)
+
+#Mayis 31 (t-1) >> length 397/ 1 Haziran(t)  /   2 Haziran (t+1) 
+
+n<-408
+
+dates<- seq(as.Date("2019-04-30"), length = n, by = "days")
+
+validation_dates<-seq(as.Date("2020-03-01"), length = n-306, by = "days")
+validation_dates
+```
+                                                 
+
+
+                                                   EARBUD PREDICTION EXAMPLE
+
+```{r}
+#Create earbud data
+earbud<-subset(data, data$product_content_id==6676673)
+
+earbud<-earbud[1:408, ]
+
+#Visually inspecting the data, first part of the data does not give any insight, therefore a selected part is displayed
+earbud[400:408]
+
+#Checking the string
+str(earbud)
+
+
+#Corvert to xts for forecasting
+earbud_xts<-xts(earbud,order.by=dates)
+
+#Split data to traind and test data
+earbud_train_xts<-earbud_xts[index(earbud_xts)>"2019-06-19" & index(earbud_xts)<"2020-03-01"]
+
+earbud_valid_xts<-earbud_xts[index(earbud_xts)>="2020-03-01"&  index(earbud_xts)<"2020-06-11" ]
+
+
+#To creata data table of extra regressor for model
+earbud_xreg1<-cbind(earbud[52:306,"favored_count"],
+                    earbud[52:306,"price"])
+
+earbud_xreg2<-cbind(earbud[307:n,"favored_count"],
+                    earbud[307:n,"price"])
+
+
+
+earbud_arima_model<-Arima(as.numeric(earbud_train_xts$sold_count),
+                          xreg=as.matrix(earbud_xreg1), 
+                          order=c(0,1,3))
+
+
+#The choose the best model in arima, we investigate the AIC, the smaller this value is, the better our model 
+AIC(earbud_arima_model)
+```
+
+
+```{r, message=FALSE, warning=FALSE,results='hide'}
+earbud_forecast_arima<-forecast(earbud_arima_model,xreg=as.matrix(earbud_xreg2))
+
+head(earbud_forecast_arima)
+
+earbud_forecast_arima_xts<-xts(earbud_forecast_arima$mean,order.by=validation_dates)
+```
+
+
+```{r,fig.width=10, fig.height=6}
+plot(dates,earbud$sold_count,
+     frame=FALSE,
+     col="blue",
+     lwd=0.1,
+     main="Earbud Sales",
+     ylab= "Sales Amount",
+     xlab= "Date",
+     pch=19,
+     cex=0.3)
+
+lines(validation_dates,earbud_forecast_arima_xts,col="red",lwd=2)
+```
+
+
+```{r}
+earbud_ARIMA_MAPE<-100*mean(abs((earbud_forecast_arima_xts-as.numeric(earbud_valid_xts$sold_count))/as.numeric(earbud_valid_xts$sold_count)))
+earbud_ARIMA_MAPE
+
+############################################################################
+###Earbud Regression
+
+earbud_lm_train<-earbud[52:306,]
+earbud_lm_valid<-earbud[307:n,]
+
+earbud_lm_model<-lm(sold_count~favored_count,data=earbud_lm_train)
+
+earbud_lm_model
+
+pred_earbud_lm_model<-predict(earbud_lm_model,earbud_lm_valid)
+
+head(pred_earbud_lm_model)
+
+pred_earbud_lm_model_xts<-xts(pred_earbud_lm_model,order.by=validation_dates)
+```
+
+
+```{r,fig.width=10, fig.height=6}
+plot(dates,earbud$sold_count,
+      frame=FALSE,
+     col="blue",
+     lwd=0.1,
+     main="Earbud Sales",
+     ylab= "Sales Amount",
+     xlab= "Date",
+     pch=19,
+     cex=0.3)
+lines(validation_dates,pred_earbud_lm_model_xts,col="red",lwd=2)
+```
+
+
+                                                                  SUBMISSION
+After identifying the trends and fitting the models in each product category, we then proceed to submit each category prediction considering the MAPE and MAE values retracted from the model. 
+```{r}
+earbud_reg_MAPE<-100*mean(abs((pred_earbud_lm_model_xts-as.numeric(earbud_valid_xts$sold_count))/as.numeric(earbud_valid_xts$sold_count)))
+earbud_reg_MAPE
+
+#earbud_regression_MAPE<-100*mean(abs((pred_earbud_lm_model_xts-earbud_valid_MAPE)/earbud_valid_MAPE))
+#earbud_regression_MAPE
+
+#########################################################################
+###Earbud ARIMA Submission Forecast
+earbud_price_xreg<-as.numeric(earbud_xts$price)
+earbud_price_model<-auto.arima(earbud_price_xreg)
+earbud_price_forecast<-forecast(earbud_price_model,h=2)
+
+earbud_favored_xreg<-as.numeric(earbud_xts$favored_count)
+earbud_favored_model<-auto.arima(earbud_favored_xreg)
+earbud_favored_forecast<-forecast(earbud_favored_model,h=2)
+##################################################################
+
+earbud_submission_xreg1<-cbind(earbud[1:n,"favored_count"],
+                               earbud[1:n,"price"])
+earbud_submission_xreg2<-data.table("favored_count"=earbud_favored_forecast$mean,
+                                    "price"=earbud_price_forecast$mean)
+
+########## Arima submission earbud
+earbud_submission_xts<-as.numeric(earbud_xts$sold_count)
+
+earbud_submission_arima_model<-Arima(earbud_submission_xts,xreg=as.matrix(earbud_submission_xreg1),order=c(0,1,3))
+
+earbud_submission_forecast_arima<-forecast(earbud_submission_arima_model,xreg=as.matrix(earbud_submission_xreg2))
+#########Regression submission
+earbud_lm_submission<-lm(sold_count~favored_count+price,data=earbud)
+
+pred_earbud_lm_submodel<-predict(earbud_lm_submission,earbud_submission_xreg2)
+
+##########
+earbud_submission_arima<-0.5*(earbud_submission_forecast_arima$mean[2]+pred_earbud_lm_submodel[2])
+earbud_submission_arima
+```
+                                              
+                                                                  CONCLUSION
+As a part of he Time Series Analysis and Forecasting course, the project has been valuable to execute in our perspective. We have had the chance to gain insights into the fast-paced growth - especially fueled by COVID-19 - of the e-commerce sector in Turkey. Having access to Trendyol's data and API has also allowed us to get more familiar with the usage of Application Programming Interfaces. As a group of three, we had some difficulty in meeting-up since the pandemic forces each team member to another location in Turkey and we have worked together on document sharing platforms and video conference platforms most of the time. We believe this has also been an invaluable experience regarding the future of academia and work.   
+  
+When it comes to the technical results of the projects, we believe - in the first place - there were some other aspects of the forecasting model that could be incorporated into the workspace and data, However, since we have collectively decided that sometimes the best data to use is only the necessary and stand-alone data, we have not supported our forecasts with external sources such as Alexa Web Searches Data, Similar Web and Google Trends. Altough we have identified key metrics that could be used from these platforms and data sources, we believe that the sales data provided by Trendyol already shows these effects in key indicators and there would be no further need to over-fit our models in the quest of making more to-the-point forecasts.Therefore, the results we have submitted and also presented above - we believe - are well fitted and logical forecasts, the reasons which we may have not been able to be be more precise in the forecasts may be attributed to the fast changing environment and consumer sentiment seen all over the world and also in Turkey. At the start of the coronavirus pandemic, the user/consumer sentiment had a bearish look to the market however, this sentiment rapidly changed in the middle of our forecast period. For these reasons, the change of money supply in the economy, public market expectations, rapid change in the price of crude oil and an increased government subsidy programs for consumers have all collectively contributed in the construction of an - as we deem it - unreliable market.
+
+However, the team has done it's best in researching  relevant materials and putting together ideas/efforts to maximixe the confidence interval for forecasts and we have done 6 changes in the code chunks while in the forecast period. Our findings from the project includes  
+ - Effect of macroeconomic trends on the sales amount of e-commerce products.  
+ - Effect of consumer sentiment in crisis times to more "reachable" platforms.  
+ - How a product's sales amount are effected with seasonality and how in each country and region the model used should be different.  
+ - Utilizing the arima model using external regressors.
+ - Deconstructing a data set for test & validation purposes.
+ - Identifying which time frames should be used for future forecasting, having in mind the non-normal times.
+ - How the sales of different products can be correlated and how this correlation can be used in the forecasting models and many technical details. 
+ 
+ 
+                                                            TEAM MEMBERS
+ Bahadır Ayan - 2016402114
+ Yasemin Yücebilgen - 2016402021
+ Mustafa Esat Canlı - 2018402003
+                                                                
+                                                          
+                                                                
+                                                                
+                                                                
